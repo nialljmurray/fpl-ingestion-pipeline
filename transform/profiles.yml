@@ -1,0 +1,20 @@
+fpl:
+  target: prod
+  outputs:
+    prod:
+      type: bigquery
+      method: service-account-json
+      project: YOUR_PROJECT_ID
+      dataset: fpl_data
+      threads: 4
+      keyfile_json:
+        type: "{{ env_var('DBT_SA_TYPE') }}"
+        project_id: "{{ env_var('DBT_SA_PROJECT_ID') }}"
+        private_key_id: "{{ env_var('DBT_SA_PRIVATE_KEY_ID') }}"
+        private_key: "{{ env_var('DBT_SA_PRIVATE_KEY') }}"
+        client_email: "{{ env_var('DBT_SA_CLIENT_EMAIL') }}"
+        client_id: "{{ env_var('DBT_SA_CLIENT_ID') }}"
+        auth_uri: "{{ env_var('DBT_SA_AUTH_URI') }}"
+        token_uri: "{{ env_var('DBT_SA_TOKEN_URI') }}"
+        auth_provider_x509_cert_url: "{{ env_var('DBT_SA_AUTH_PROVIDER_CERT_URL') }}"
+        client_x509_cert_url: "{{ env_var('DBT_SA_CLIENT_CERT_URL') }}"

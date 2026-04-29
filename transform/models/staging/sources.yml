@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: fpl_data
+    database: YOUR_PROJECT_ID
+    schema: fpl_data
+    tables:
+      - name: players
+      - name: fixtures
