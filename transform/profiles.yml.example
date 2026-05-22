@@ -5,7 +5,7 @@ fpl:
       type: bigquery
       method: service-account-json
       project: YOUR_PROJECT_ID
-      dataset: fpl_data
+      dataset: fpl_marts
       threads: 4
       keyfile_json:
         type: "{{ env_var('DBT_SA_TYPE') }}"

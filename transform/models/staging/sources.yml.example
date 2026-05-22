@@ -6,4 +6,8 @@ sources:
     schema: fpl_data
     tables:
       - name: players
+      - name: teams
       - name: fixtures
+      - name: matches
+      - name: player_types
+      - name: element_summary

@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 transform/target/
 transform/dbt_packages/
+transform/profiles.yml
+transform/models/staging/sources.yml
+transform/load_secrets.sh
