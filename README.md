@@ -1,6 +1,6 @@
 # FPL Data Pipeline
 
-An end-to-end data pipeline that ingests data from the [Fantasy Premier League API](https://fantasy.premierleague.com/api/bootstrap-static/), persists it to BigQuery, and runs dbt transformations to produce analytics-ready tables.
+An end-to-end data pipeline built on GCP that ingests data from the [Fantasy Premier League API](https://fantasy.premierleague.com/api/bootstrap-static/) and produces analytics-ready tables in BigQuery using a Medallion architecture.
 
 ---
 
@@ -9,14 +9,25 @@ An end-to-end data pipeline that ingests data from the [Fantasy Premier League A
 ```
 Cloud Scheduler (3AM daily, Europe/Dublin)
         ↓
-Cloud Workflows (fpl-pipeline)
+Cloud Function — Ingestion (Bronze)
+        Fetches FPL API → raw JSON dumped to GCS
         ↓
-  Step 1: Cloud Run Service — Ingestion
-          Pulls data from FPL API → BigQuery raw tables
-        ↓ (only triggers on success)
-  Step 2: Cloud Run Job — dbt
-          Runs dbt models → BigQuery mart tables
+Cloud Function — Loading (Silver)
+        Schema validation → BigQuery tables (drift routed to DLQ)
+        ↓
+Cloud Run Job — dbt (Gold)
+        SQL transformations → BigQuery mart tables
 ```
+
+---
+
+## Medallion Layers
+
+| Layer | Location | Description |
+|---|---|---|
+| Bronze | `gs://fpl-raw/` | Raw API responses, untouched, timestamped by run |
+| Silver | BigQuery `fpl_data` | Schema-validated, structured tables |
+| Gold | BigQuery `fpl_data` | dbt mart tables ready for analytics |
 
 ---
 
@@ -24,28 +35,34 @@ Cloud Workflows (fpl-pipeline)
 
 ```
 fpl-api/
-├── ingestion/
-│   ├── main.py                     # Cloud Run ingestion job
-│   ├── schemas.py                  # BigQuery table schemas
-│   ├── player-summary-backfill.py  # One-off player history backfill
+├── ingestion/              # Bronze — Cloud Function
+│   ├── main.py
+│   ├── fpl_client.py
+│   ├── gcs.py
 │   └── requirements.txt
 │
-├── transform/                      # dbt project
+├── loading/                # Silver — Cloud Function
+│   ├── main.py
+│   ├── gcs.py
+│   ├── bq.py
+│   ├── schema.py
+│   ├── transforms.py
+│   └── requirements.txt
+│
+├── transform/              # Gold — dbt project
 │   ├── models/
 │   │   ├── mart/
 │   │   │   └── fct_top_players.sql
 │   │   └── staging/
 │   │       └── sources.yml
-│   ├── macros/
 │   ├── Dockerfile
 │   ├── dbt_project.yml
-│   └── profiles_example.yml        # Template — copy to profiles.yml locally
+│   └── profiles.yml
 │
-├── fpl_workflow.yml                # Cloud Workflows definition
-├── SETUP.md                        # Full setup guide
-├── RUNBOOK.md                      # Operational guide
-├── .gitignore
-└── README.md
+├── Makefile                # Deployment commands
+├── fpl_workflow.yml        # Cloud Workflows definition
+├── SETUP.md
+└── RUNBOOK.md
 ```
 
 ---
@@ -54,72 +71,81 @@ fpl-api/
 
 | Resource | Name | Purpose |
 |---|---|---|
-| Cloud Run Service | `fpl-ingestion` | Daily FPL API ingestion |
-| Cloud Run Job | `dbt-fpl` | dbt transformations |
-| Cloud Workflows | `fpl-pipeline` | Orchestrates ingestion → dbt |
-| Cloud Scheduler | `fpl-daily-pipeline` | Triggers workflow at 3AM daily |
-| Artifact Registry | `fpl-repo` | Stores the dbt Docker image |
-| BigQuery Dataset | `fpl_data` | Raw and mart tables |
+| Cloud Function | `fpl-ingestion` | Fetches FPL API, dumps raw JSON to GCS |
+| Cloud Function | `fpl-loading` | Validates schemas, loads to BigQuery |
+| Cloud Run Job | `dbt-fpl` | Runs dbt Gold layer transformations |
+| Cloud Scheduler | `fpl-daily` | Triggers ingestion at 3AM daily |
+| GCS Bucket | `fpl-raw` | Bronze raw landing zone |
+| GCS Bucket | `fpl-schema-registry` | Versioned BigQuery schema definitions |
+| GCS Bucket | `fpl-dlq` | Dead letter queue for schema drift |
+| BigQuery Dataset | `fpl_data` | Silver and Gold tables |
+| Artifact Registry | `fpl-repo` | dbt Docker image |
 | Secret Manager | `DBT_SA_*` | dbt service account credentials |
 
 ---
 
 ## BigQuery Tables
 
-### Raw (populated by ingestion job)
+### Silver
+
+| Table | Source | Description |
+|---|---|---|
+| `players` | bootstrap-static | All FPL players and season stats |
+| `teams` | bootstrap-static | All Premier League teams |
+| `matches` | bootstrap-static | Gameweek metadata |
+| `player_types` | bootstrap-static | Position definitions |
+| `fixtures` | fixtures endpoint | All fixtures with difficulty ratings |
+| `element_summary` | element-summary endpoint | Per-gameweek player stats |
+
+### Gold (dbt)
 
 | Table | Description |
 |---|---|
-| `players` | All FPL players and their season stats |
-| `fixtures` | All fixtures with difficulty ratings |
-| `teams` | All Premier League teams |
-| `matches` | Gameweek metadata |
-| `player_types` | Position definitions (GK, DEF, MID, FWD) |
-| `player_history` | Per-gameweek player stats — populated by backfill script |
-
-### Mart (produced by dbt)
-
-| Table | Description |
-|---|---|
-| `fct_top_players` | Top performing players ranked by a composite value score, with upcoming fixture difficulty |
-
-The composite ranking score is `points_per_million + points_per_90 + xgi_per_90`, which surfaces players who are cheap relative to their returns, consistent over 90 minutes, and involved in goals — filtered to players with over 1500 minutes played.
+| `fct_top_players` | Top players ranked by a composite value score with upcoming fixture difficulty |
 
 ---
 
-## Getting Started
+## Deployment
 
-See [SETUP.md](./SETUP.md) for the full step-by-step guide to stand this up in your own GCP project.
+Copy `.env.example` to `.env` and fill in your project values, then use `make`:
 
-See [RUNBOOK.md](./RUNBOOK.md) for day-to-day operations, failure handling, and how to deploy changes.
+```bash
+make deploy-ingestion   # deploy Bronze function
+make deploy-loading     # deploy Silver function
+make trigger-ingestion  # manually trigger an ingestion run
+make trigger-loading    # manually trigger a loading run
+```
+
+---
+
+## Schema Registry
+
+Schemas are stored as versioned JSON files in `gs://fpl-schema-registry/`. GCS object versioning is enabled so every update retains the previous version.
+
+To update a schema after an FPL API change:
+1. Download the existing schema: `gsutil cp gs://fpl-schema-registry/players.json players.json`
+2. Add the new field to the JSON file
+3. Upload: `gsutil cp players.json gs://fpl-schema-registry/players.json`
+
+The loading function picks up the updated schema on the next run — no redeployment needed.
+
+---
+
+## Dead Letter Queue
+
+Records that fail schema validation (unexpected new fields) are routed to `gs://fpl-dlq/` rather than dropped. Each DLQ file contains the raw record, the drift details, and the run timestamp for investigation.
 
 ---
 
 ## Local Development
 
-### Run ingestion locally
-
 ```bash
-cd ingestion
-pip install -r requirements.txt
+# Authenticate
 gcloud auth application-default login
-python main.py
-```
 
-### Run dbt locally
+# Run ingestion locally
+cd ingestion && pip install -r requirements.txt && python -c "import main; main.main()"
 
-```bash
-cd transform
-cp profiles_example.yml profiles.yml
-# populate profiles.yml with your GCP project ID
-# export DBT_SA_* environment variables from your service account JSON (see SETUP.md)
-pip install dbt-bigquery
-dbt run --profiles-dir .
-```
-
-### Run the player history backfill
-
-```bash
-cd ingestion
-python player-summary-backfill.py
+# Run dbt locally
+cd transform && pip install dbt-bigquery && dbt run --profiles-dir .
 ```

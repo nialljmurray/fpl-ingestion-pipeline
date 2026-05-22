@@ -1,53 +1,33 @@
-import requests
 import logging
 import json
 from datetime import datetime, timezone
-from google.cloud import storage
+import google.cloud.logging
 
-logging.basicConfig(level=logging.INFO)
+import fpl_client
+import gcs
+
+google.cloud.logging.Client().setup_logging()
 logger = logging.getLogger(__name__)
-
-gcs_client = storage.Client()
-RAW_BUCKET = "fpl-raw"
-FPL_MAIN_URL = "https://fantasy.premierleague.com/api/bootstrap-static/"
-FPL_FIXTURES_URL = "https://fantasy.premierleague.com/api/fixtures/"
-
-
-def api_call(url):
-    logger.info(f"Making API request to: {url}")
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        logger.info(f"API request successful — status code: {response.status_code}")
-        return response.json()
-    except requests.exceptions.Timeout:
-        logger.error(f"Request timed out for URL: {url}")
-        raise
-    except requests.exceptions.HTTPError as e:
-        logger.error(f"HTTP error occurred: {e} — status code: {response.status_code}")
-        raise
-    except requests.exceptions.RequestException as e:
-        logger.error(f"API request failed: {e}")
-        raise
-
-
-def dump_to_gcs(data, blob_path):
-    bucket = gcs_client.bucket(RAW_BUCKET)
-    blob = bucket.blob(blob_path)
-    blob.upload_from_string(json.dumps(data), content_type="application/json")
-    logger.info(f"Dumped raw data to gs://{RAW_BUCKET}/{blob_path}")
 
 
 def main(request=None):
     logger.info("FPL ingestion started")
-
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    data = api_call(FPL_MAIN_URL)
-    dump_to_gcs(data, f"bootstrap-static/{timestamp}.json")
+    bootstrap = fpl_client.fetch_bootstrap_static()
+    gcs.dump_raw(bootstrap, f"bootstrap-static/{timestamp}.json")
+    logger.info(f"Dumped bootstrap-static to gs://fpl-raw/bootstrap-static/{timestamp}.json")
 
-    fixtures = api_call(FPL_FIXTURES_URL)
-    dump_to_gcs(fixtures, f"fixtures/{timestamp}.json")
+    fixtures = fpl_client.fetch_fixtures()
+    gcs.dump_raw(fixtures, f"fixtures/{timestamp}.json")
+    logger.info(f"Dumped fixtures to gs://fpl-raw/fixtures/{timestamp}.json")
+
+    element_ids = [e["id"] for e in bootstrap["elements"]]
+    count = 0
+    for element_id, summary in fpl_client.fetch_element_summaries(element_ids):
+        gcs.dump_raw(summary, f"element-summaries/{timestamp}/{element_id:04d}.json")
+        count += 1
+    logger.info(f"Wrote {count} element summaries to GCS")
 
     logger.info("FPL ingestion completed")
     return "OK", 200
