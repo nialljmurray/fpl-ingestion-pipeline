@@ -1,0 +1,59 @@
+main:
+  steps:
+    - init:
+        assign:
+          - project_id: "YOUR_PROJECT_ID"
+          - region: "europe-west1"
+          - ingestion_url: "https://europe-west1-YOUR_PROJECT_ID.cloudfunctions.net/fpl_ingestion"
+          - loading_url: "https://europe-west1-YOUR_PROJECT_ID.cloudfunctions.net/fpl_loading"
+
+    - run_ingestion:
+        call: http.post
+        args:
+          url: ${ingestion_url}
+          auth:
+            type: OIDC
+          timeout: 600
+        result: ingestion_result
+
+    - check_ingestion:
+        switch:
+          - condition: ${ingestion_result.code != 200}
+            raise: ${"Ingestion failed with status " + string(ingestion_result.code)}
+
+    - extract_timestamp:
+        assign:
+          - run_timestamp: ${ingestion_result.body.run_timestamp}
+
+    - run_loading:
+        call: http.post
+        args:
+          url: ${loading_url}
+          auth:
+            type: OIDC
+          body:
+            run_timestamp: ${run_timestamp}
+          timeout: 600
+        result: loading_result
+
+    - check_loading:
+        switch:
+          - condition: ${loading_result.code != 200}
+            raise: ${"Loading failed with status " + string(loading_result.code)}
+
+    - run_dbt:
+        call: http.post
+        args:
+          url: ${"https://europe-west1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/" + project_id + "/jobs/dbt-fpl:run"}
+          auth:
+            type: OAuth2
+          timeout: 600
+        result: dbt_result
+
+    - check_dbt:
+        switch:
+          - condition: ${dbt_result.code != 200}
+            raise: ${"dbt run failed with status " + string(dbt_result.code)}
+
+    - return_result:
+        return: "Pipeline completed successfully"

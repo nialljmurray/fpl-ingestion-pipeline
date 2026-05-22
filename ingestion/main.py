@@ -30,4 +30,4 @@ def main(request=None):
     logger.info(f"Wrote {count} element summaries to GCS")
 
     logger.info("FPL ingestion completed")
-    return "OK", 200
+    return json.dumps({"run_timestamp": timestamp}), 200, {"Content-Type": "application/json"}
