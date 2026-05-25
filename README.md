@@ -127,9 +127,17 @@ fpl-api/
 
 ## Deployment
 
-Copy `.env.example` to `.env` and fill in your project values, then use `make`:
+Copy `.env.example` to `.env` and fill in your project values (including the `DBT_SA_*` fields from your dbt service account JSON key file), then use `make`:
 
 ```bash
+# Authenticate first
+gcloud auth login
+
+# Push dbt service account credentials to Secret Manager (one-time setup)
+make create-dbt-secrets  # create the secret slots
+make push-dbt-secrets    # write values from .env into Secret Manager
+
+# Deploy infrastructure
 make deploy-ingestion    # deploy Bronze Cloud Function
 make deploy-loading      # deploy Silver Cloud Function
 make deploy-workflow     # deploy Cloud Workflows definition

@@ -55,3 +55,28 @@ trigger-loading:
 		-H "Authorization: bearer $$(gcloud auth print-identity-token)" \
 		-H "Content-Type: application/json" \
 		-d "{\"run_timestamp\": \"$$ts\"}"
+
+DBT_SECRET_NAMES = DBT_SA_TYPE DBT_SA_PROJECT_ID DBT_SA_PRIVATE_KEY_ID DBT_SA_PRIVATE_KEY \
+                   DBT_SA_CLIENT_EMAIL DBT_SA_CLIENT_ID DBT_SA_AUTH_URI DBT_SA_TOKEN_URI \
+                   DBT_SA_AUTH_PROVIDER_CERT_URL DBT_SA_CLIENT_CERT_URL
+
+create-dbt-secrets:
+	@for secret in $(DBT_SECRET_NAMES); do \
+		gcloud secrets create $$secret \
+			--project=$(PROJECT_ID) \
+			--replication-policy=automatic 2>/dev/null \
+			&& echo "Created: $$secret" \
+			|| echo "Already exists (skipped): $$secret"; \
+	done
+
+push-dbt-secrets:
+	@printf '%s' "$(DBT_SA_TYPE)" | gcloud secrets versions add DBT_SA_TYPE --project=$(PROJECT_ID) --data-file=-
+	@printf '%s' "$(DBT_SA_PROJECT_ID)" | gcloud secrets versions add DBT_SA_PROJECT_ID --project=$(PROJECT_ID) --data-file=-
+	@printf '%s' "$(DBT_SA_PRIVATE_KEY_ID)" | gcloud secrets versions add DBT_SA_PRIVATE_KEY_ID --project=$(PROJECT_ID) --data-file=-
+	@printf '%s' "$(DBT_SA_PRIVATE_KEY)" | gcloud secrets versions add DBT_SA_PRIVATE_KEY --project=$(PROJECT_ID) --data-file=-
+	@printf '%s' "$(DBT_SA_CLIENT_EMAIL)" | gcloud secrets versions add DBT_SA_CLIENT_EMAIL --project=$(PROJECT_ID) --data-file=-
+	@printf '%s' "$(DBT_SA_CLIENT_ID)" | gcloud secrets versions add DBT_SA_CLIENT_ID --project=$(PROJECT_ID) --data-file=-
+	@printf '%s' "$(DBT_SA_AUTH_URI)" | gcloud secrets versions add DBT_SA_AUTH_URI --project=$(PROJECT_ID) --data-file=-
+	@printf '%s' "$(DBT_SA_TOKEN_URI)" | gcloud secrets versions add DBT_SA_TOKEN_URI --project=$(PROJECT_ID) --data-file=-
+	@printf '%s' "$(DBT_SA_AUTH_PROVIDER_CERT_URL)" | gcloud secrets versions add DBT_SA_AUTH_PROVIDER_CERT_URL --project=$(PROJECT_ID) --data-file=-
+	@printf '%s' "$(DBT_SA_CLIENT_CERT_URL)" | gcloud secrets versions add DBT_SA_CLIENT_CERT_URL --project=$(PROJECT_ID) --data-file=-
